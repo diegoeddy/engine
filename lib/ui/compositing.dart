@@ -57,10 +57,7 @@ class SceneBuilder extends NativeFieldWrapperClass2 {
   ///
   /// See [pop] for details about the operation stack.
   EngineLayer pushTransform(Float64List matrix4) {
-    if (matrix4 == null)
-      throw new ArgumentError('"matrix4" argument cannot be null');
-    if (matrix4.length != 16)
-      throw new ArgumentError('"matrix4" must have 16 entries.');
+    assert(_matrix4IsValid(matrix4));
     return _pushTransform(matrix4);
   }
   EngineLayer _pushTransform(Float64List matrix4) native 'SceneBuilder_pushTransform';
@@ -98,7 +95,7 @@ class SceneBuilder extends NativeFieldWrapperClass2 {
   EngineLayer pushClipRRect(RRect rrect, {Clip clipBehavior = Clip.antiAlias}) {
     assert(clipBehavior != null);
     assert(clipBehavior != Clip.none);
-    return _pushClipRRect(rrect._value, clipBehavior.index);
+    return _pushClipRRect(rrect._value32, clipBehavior.index);
   }
   EngineLayer _pushClipRRect(Float32List rrect, int clipBehavior) native 'SceneBuilder_pushClipRRect';
 
@@ -264,7 +261,7 @@ class SceneBuilder extends NativeFieldWrapperClass2 {
   /// Android view: When resizing an Android view there is a short period during
   /// which the framework cannot tell if the newest texture frame has the
   /// previous or new size, to workaround this the framework "freezes" the
-  /// texture just before resizing the Android view and unfreezes it when it is
+  /// texture just before resizing the Android view and un-freezes it when it is
   /// certain that a frame with the new size is ready.
   void addTexture(int textureId, { Offset offset: Offset.zero, double width: 0.0, double height: 0.0 , bool freeze: false}) {
     assert(offset != null, 'Offset argument was null');
@@ -370,16 +367,43 @@ class SceneHost extends NativeFieldWrapperClass2 {
   ///
   /// The export token is a dart:zircon Handle, but that type isn't
   /// available here. This is called by ChildViewConnection in
-  /// //topaz/public/lib/ui/flutter/.
+  /// //topaz/public/dart/fuchsia_scenic_flutter/.
   ///
   /// The scene host takes ownership of the provided export token handle.
   SceneHost(dynamic exportTokenHandle) {
     _constructor(exportTokenHandle);
   }
+  SceneHost.fromViewHolderToken(
+      dynamic viewHolderTokenHandle,
+      void Function() viewConnectedCallback,
+      void Function() viewDisconnectedCallback,
+      void Function(bool) viewStateChangedCallback) {
+    _constructorViewHolderToken(viewHolderTokenHandle, viewConnectedCallback,
+        viewDisconnectedCallback, viewStateChangedCallback);
+  }
+
   void _constructor(dynamic exportTokenHandle) native 'SceneHost_constructor';
+  void
+      _constructorViewHolderToken(
+          dynamic viewHolderTokenHandle,
+          void Function() viewConnectedCallback,
+          void Function() viewDisconnectedCallback,
+          void Function(bool) viewStateChangedCallback)
+      native 'SceneHost_constructorViewHolderToken';
 
   /// Releases the resources associated with the child scene host.
   ///
   /// After calling this function, the child scene host cannot be used further.
   void dispose() native 'SceneHost_dispose';
+
+  /// Set properties on the linked scene.  These properties include its bounds,
+  /// as well as whether it can be the target of focus events or not.
+  void setProperties(
+      double width,
+      double height,
+      double insetTop,
+      double insetRight,
+      double insetBottom,
+      double insetLeft,
+      bool focusable) native 'SceneHost_setProperties';
 }

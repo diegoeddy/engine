@@ -264,6 +264,19 @@ TEST_F(ParagraphTest, BoldParagraph) {
   ASSERT_TRUE(paragraph->runs_.styles_[1].equals(text_style));
   ASSERT_EQ(paragraph->records_[0].style().color, text_style.color);
   ASSERT_TRUE(Snapshot());
+
+  // width_ takes the full available space, but longest_line_ is only the width
+  // of the text, which is less than one line.
+  ASSERT_DOUBLE_EQ(paragraph->width_, GetTestCanvasWidth());
+  ASSERT_TRUE(paragraph->longest_line_ < paragraph->width_);
+  Paragraph::RectHeightStyle rect_height_style =
+      Paragraph::RectHeightStyle::kMax;
+  Paragraph::RectWidthStyle rect_width_style =
+      Paragraph::RectWidthStyle::kTight;
+  std::vector<txt::Paragraph::TextBox> boxes = paragraph->GetRectsForRange(
+      0, strlen(text), rect_height_style, rect_width_style);
+  ASSERT_DOUBLE_EQ(paragraph->longest_line_,
+                   boxes[boxes.size() - 1].rect.right() - boxes[0].rect.left());
 }
 
 TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(LeftAlignParagraph)) {
@@ -407,7 +420,8 @@ TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(RightAlignParagraph)) {
   builder.Pop();
 
   auto paragraph = builder.Build();
-  paragraph->Layout(GetTestCanvasWidth() - 100);
+  int available_width = GetTestCanvasWidth() - 100;
+  paragraph->Layout(available_width);
 
   paragraph->Paint(GetCanvas(), 0, 0);
 
@@ -431,6 +445,14 @@ TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(RightAlignParagraph)) {
       paragraph->width_ -
           paragraph->breaker_.getWidths()[paragraph->records_[0].line()],
       2.0);
+
+  // width_ takes the full available space, while longest_line_ wraps the glyphs
+  // as tightly as possible. Even though this text is more than one line long,
+  // no line perfectly spans the width of the full line, so longest_line_ is
+  // less than width_.
+  ASSERT_DOUBLE_EQ(paragraph->width_, available_width);
+  ASSERT_TRUE(paragraph->longest_line_ < available_width);
+  ASSERT_DOUBLE_EQ(paragraph->longest_line_, 880.765625);
 
   ASSERT_TRUE(paragraph->records_[2].style().equals(text_style));
   ASSERT_DOUBLE_EQ(paragraph->records_[2].offset().y(), expected_y);
@@ -684,6 +706,7 @@ TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(JustifyRTL)) {
   txt::ParagraphStyle paragraph_style;
   paragraph_style.max_lines = 14;
   paragraph_style.text_align = TextAlign::justify;
+  paragraph_style.text_direction = TextDirection::rtl;
   txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
 
   txt::TextStyle text_style;
@@ -703,15 +726,32 @@ TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(JustifyRTL)) {
 
   paragraph->Paint(GetCanvas(), 0, 0);
 
-  ASSERT_TRUE(Snapshot());
-
   auto glyph_line_width = [&paragraph](int index) {
     size_t second_to_last_position_index =
-        paragraph->glyph_lines_[index].positions.size() - 2;
+        paragraph->glyph_lines_[index].positions.size() - 1;
     return paragraph->glyph_lines_[index]
         .positions[second_to_last_position_index]
         .x_pos.end;
   };
+
+  SkPaint paint;
+  paint.setStyle(SkPaint::kStroke_Style);
+  paint.setAntiAlias(true);
+  paint.setStrokeWidth(1);
+
+  // Tests for GetRectsForRange()
+  Paragraph::RectHeightStyle rect_height_style =
+      Paragraph::RectHeightStyle::kMax;
+  Paragraph::RectWidthStyle rect_width_style =
+      Paragraph::RectWidthStyle::kTight;
+  paint.setColor(SK_ColorRED);
+  std::vector<txt::Paragraph::TextBox> boxes =
+      paragraph->GetRectsForRange(0, 100, rect_height_style, rect_width_style);
+  for (size_t i = 0; i < boxes.size(); ++i) {
+    GetCanvas()->drawRect(boxes[i].rect, paint);
+  }
+  ASSERT_EQ(boxes.size(), 5ull);
+  ASSERT_TRUE(Snapshot());
 
   // All lines except the last should be justified to the width of the
   // paragraph.
@@ -740,11 +780,13 @@ TEST_F(ParagraphTest, DecorationsParagraph) {
                           TextDecoration::kLineThrough;
   text_style.decoration_style = txt::TextDecorationStyle::kSolid;
   text_style.decoration_color = SK_ColorBLACK;
+  text_style.decoration_thickness_multiplier = 2.0;
   builder.PushStyle(text_style);
   builder.AddText("This text should be");
 
   text_style.decoration_style = txt::TextDecorationStyle::kDouble;
   text_style.decoration_color = SK_ColorBLUE;
+  text_style.decoration_thickness_multiplier = 1.0;
   builder.PushStyle(text_style);
   builder.AddText(" decorated even when");
 
@@ -755,11 +797,13 @@ TEST_F(ParagraphTest, DecorationsParagraph) {
 
   text_style.decoration_style = txt::TextDecorationStyle::kDashed;
   text_style.decoration_color = SK_ColorBLACK;
+  text_style.decoration_thickness_multiplier = 3.0;
   builder.PushStyle(text_style);
   builder.AddText(" the next line.");
 
   text_style.decoration_style = txt::TextDecorationStyle::kWavy;
   text_style.decoration_color = SK_ColorRED;
+  text_style.decoration_thickness_multiplier = 1.0;
   builder.PushStyle(text_style);
 
   builder.AddText(" Otherwise, bad things happen.");
@@ -800,6 +844,19 @@ TEST_F(ParagraphTest, DecorationsParagraph) {
   ASSERT_EQ(paragraph->records_[3].style().decoration_color, SK_ColorBLACK);
   ASSERT_EQ(paragraph->records_[4].style().decoration_color, SK_ColorBLACK);
   ASSERT_EQ(paragraph->records_[5].style().decoration_color, SK_ColorRED);
+
+  ASSERT_EQ(paragraph->records_[0].style().decoration_thickness_multiplier,
+            2.0);
+  ASSERT_EQ(paragraph->records_[1].style().decoration_thickness_multiplier,
+            1.0);
+  ASSERT_EQ(paragraph->records_[2].style().decoration_thickness_multiplier,
+            1.0);
+  ASSERT_EQ(paragraph->records_[3].style().decoration_thickness_multiplier,
+            3.0);
+  ASSERT_EQ(paragraph->records_[4].style().decoration_thickness_multiplier,
+            3.0);
+  ASSERT_EQ(paragraph->records_[5].style().decoration_thickness_multiplier,
+            1.0);
 }
 
 TEST_F(ParagraphTest, ItalicsParagraph) {
@@ -928,6 +985,74 @@ TEST_F(ParagraphTest, DISABLED_ArabicParagraph) {
   for (size_t i = 0; i < u16_text.length(); i++) {
     ASSERT_EQ(paragraph->text_[i], u16_text[u16_text.length() - i]);
   }
+
+  ASSERT_TRUE(Snapshot());
+}
+
+// Checks if the rects are in the correct positions after typing spaces in
+// Arabic.
+TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(ArabicRectsParagraph)) {
+  const char* text = "بمباركة التقليدية قام عن. تصفح يد    ";
+  auto icu_text = icu::UnicodeString::fromUTF8(text);
+  std::u16string u16_text(icu_text.getBuffer(),
+                          icu_text.getBuffer() + icu_text.length());
+
+  txt::ParagraphStyle paragraph_style;
+  paragraph_style.max_lines = 14;
+  paragraph_style.text_align = TextAlign::right;
+  paragraph_style.text_direction = TextDirection::rtl;
+  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+
+  txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Noto Naskh Arabic");
+  text_style.font_size = 26;
+  text_style.letter_spacing = 1;
+  text_style.word_spacing = 5;
+  text_style.color = SK_ColorBLACK;
+  text_style.height = 1;
+  text_style.decoration = TextDecoration::kUnderline;
+  text_style.decoration_color = SK_ColorBLACK;
+  builder.PushStyle(text_style);
+
+  builder.AddText(u16_text);
+
+  builder.Pop();
+
+  auto paragraph = builder.Build();
+  paragraph->Layout(GetTestCanvasWidth() - 100);
+
+  paragraph->Paint(GetCanvas(), 0, 0);
+
+  SkPaint paint;
+  paint.setStyle(SkPaint::kStroke_Style);
+  paint.setAntiAlias(true);
+  paint.setStrokeWidth(1);
+
+  // Tests for GetRectsForRange()
+  Paragraph::RectHeightStyle rect_height_style =
+      Paragraph::RectHeightStyle::kMax;
+  Paragraph::RectWidthStyle rect_width_style =
+      Paragraph::RectWidthStyle::kTight;
+  paint.setColor(SK_ColorRED);
+  std::vector<txt::Paragraph::TextBox> boxes =
+      paragraph->GetRectsForRange(0, 100, rect_height_style, rect_width_style);
+  for (size_t i = 0; i < boxes.size(); ++i) {
+    GetCanvas()->drawRect(boxes[i].rect, paint);
+  }
+  EXPECT_EQ(boxes.size(), 2ull);
+
+  EXPECT_FLOAT_EQ(boxes[0].rect.left(), 556.54688);
+  EXPECT_FLOAT_EQ(boxes[0].rect.top(), -0.26855469);
+  EXPECT_FLOAT_EQ(boxes[0].rect.right(), 900);
+  EXPECT_FLOAT_EQ(boxes[0].rect.bottom(), 44);
+
+  EXPECT_FLOAT_EQ(boxes[1].rect.left(), 510.09375);
+  EXPECT_FLOAT_EQ(boxes[1].rect.top(), -0.26855469);
+  EXPECT_FLOAT_EQ(boxes[1].rect.right(), 557.04688);
+  EXPECT_FLOAT_EQ(boxes[1].rect.bottom(), 44);
+
+  ASSERT_EQ(paragraph_style.text_align,
+            paragraph->GetParagraphStyle().text_align);
 
   ASSERT_TRUE(Snapshot());
 }
@@ -1671,6 +1796,92 @@ TEST_F(ParagraphTest,
   EXPECT_EQ(boxes.size(), 0ull);
 
   ASSERT_TRUE(Snapshot());
+}
+
+TEST_F(ParagraphTest, GetRectsForRangeIncludeCombiningCharacter) {
+  const char* text = "ดีสวัสดีชาวโลกที่น่ารัก";
+  auto icu_text = icu::UnicodeString::fromUTF8(text);
+  std::u16string u16_text(icu_text.getBuffer(),
+                          icu_text.getBuffer() + icu_text.length());
+
+  txt::ParagraphStyle paragraph_style;
+  paragraph_style.max_lines = 10;
+  paragraph_style.text_align = TextAlign::left;
+  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+
+  txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
+  text_style.font_size = 50;
+  text_style.letter_spacing = 1;
+  text_style.word_spacing = 5;
+  text_style.color = SK_ColorBLACK;
+  text_style.height = 1;
+  builder.PushStyle(text_style);
+
+  builder.AddText(u16_text);
+
+  builder.Pop();
+
+  auto paragraph = builder.Build();
+  paragraph->Layout(GetTestCanvasWidth() - 100);
+
+  paragraph->Paint(GetCanvas(), 0, 0);
+
+  Paragraph::RectHeightStyle rect_height_style =
+      Paragraph::RectHeightStyle::kTight;
+  Paragraph::RectWidthStyle rect_width_style =
+      Paragraph::RectWidthStyle::kTight;
+
+  std::vector<txt::Paragraph::TextBox> boxes =
+      paragraph->GetRectsForRange(0, 0, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 0ull);
+
+  // Case when the sentence starts with a combining character
+  // We should get 0 box for ด because it's already been combined to ดี
+  boxes =
+      paragraph->GetRectsForRange(0, 1, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 0ull);
+
+  boxes =
+      paragraph->GetRectsForRange(1, 2, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
+
+  boxes =
+      paragraph->GetRectsForRange(0, 2, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
+
+  // Case when the sentence contains a combining character
+  // We should get 0 box for ว because it's already been combined to วั
+  boxes =
+      paragraph->GetRectsForRange(3, 4, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 0ull);
+
+  boxes =
+      paragraph->GetRectsForRange(4, 5, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
+
+  boxes =
+      paragraph->GetRectsForRange(3, 5, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
+
+  // Case when the sentence contains a combining character that contain 3
+  // characters We should get 0 box for ท and ที because it's already been
+  // combined to ที่
+  boxes =
+      paragraph->GetRectsForRange(14, 15, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 0ull);
+
+  boxes =
+      paragraph->GetRectsForRange(15, 16, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 0ull);
+
+  boxes =
+      paragraph->GetRectsForRange(16, 17, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
+
+  boxes =
+      paragraph->GetRectsForRange(14, 17, rect_height_style, rect_width_style);
+  EXPECT_EQ(boxes.size(), 1ull);
 }
 
 TEST_F(ParagraphTest, DISABLE_ON_WINDOWS(GetRectsForRangeCenterParagraph)) {
@@ -2811,10 +3022,10 @@ TEST_F(ParagraphTest, FontFallbackParagraph) {
 
   ASSERT_EQ(paragraph->records_.size(), 5ull);
   ASSERT_DOUBLE_EQ(paragraph->records_[0].GetRunWidth(), 64.19921875);
-  ASSERT_DOUBLE_EQ(paragraph->records_[1].GetRunWidth(), 167.1171875);
-  ASSERT_DOUBLE_EQ(paragraph->records_[2].GetRunWidth(), 167.1171875);
-  ASSERT_DOUBLE_EQ(paragraph->records_[3].GetRunWidth(), 90.24609375);
-  ASSERT_DOUBLE_EQ(paragraph->records_[4].GetRunWidth(), 90.24609375);
+  ASSERT_DOUBLE_EQ(paragraph->records_[1].GetRunWidth(), 139.1171875);
+  ASSERT_DOUBLE_EQ(paragraph->records_[2].GetRunWidth(), 28);
+  ASSERT_DOUBLE_EQ(paragraph->records_[3].GetRunWidth(), 62.24609375);
+  ASSERT_DOUBLE_EQ(paragraph->records_[4].GetRunWidth(), 28);
   // When a different font is resolved, then the metrics are different.
   ASSERT_TRUE(paragraph->records_[2].metrics().fTop -
                   paragraph->records_[4].metrics().fTop !=
